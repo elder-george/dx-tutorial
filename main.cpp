@@ -17,11 +17,39 @@
 #define CHECK(hr) if(HRESULT _hr = (hr); FAILED(_hr)) throw _com_error(_hr)
 
 struct SwapChain{
-    SwapChain(CComPtr<IDXGISwapChain> chain)
+    SwapChain(const CComPtr<IDXGISwapChain>& chain, const CComPtr<ID3D11RenderTargetView>& renderTargetView)
     : _swapChain(chain)
-    {}
+    , _renderTargetView(renderTargetView)
+    {
+    }
+
+    void Present(UINT syncInterval) {
+        CHECK(_swapChain->Present(syncInterval, 0));
+    }
+
+	ID3D11RenderTargetView& GetRenderTargetView() const
+	{
+		return *_renderTargetView;
+	}
 
     CComPtr<IDXGISwapChain> _swapChain;
+    CComPtr<ID3D11RenderTargetView> _renderTargetView;
+
+};
+
+struct DeviceContext{
+    DeviceContext(const CComPtr<ID3D11DeviceContext>& context)
+    : _context(context)
+    {}
+
+    void Clear(ID3D11RenderTargetView& renderTarget, float red, float green, float blue, float alpha)
+    {
+	    float color[]{red, green, blue, alpha};
+    	_context->ClearRenderTargetView(&renderTarget, color);
+    }
+  
+private:
+    CComPtr<ID3D11DeviceContext> _context;
 };
 
 struct DxEngine{
@@ -71,7 +99,18 @@ struct DxEngine{
         };
         CComPtr<IDXGISwapChain> swapChain;
         CHECK(dxgi_factory->CreateSwapChain(device, &desc, &swapChain));
-        return std::make_unique<SwapChain>(swapChain);
+
+        CComPtr<ID3D11Texture2D> buffer;
+        CHECK(swapChain->GetBuffer(0, IID_PPV_ARGS(&buffer)));
+
+        CComPtr<ID3D11RenderTargetView> renderTargetView;
+        CHECK(device->CreateRenderTargetView(buffer, nullptr, &renderTargetView));
+
+        return std::make_unique<SwapChain>(swapChain, renderTargetView);
+    }
+
+    DeviceContext GetDeviceContext() const {	
+    	return DeviceContext(deviceContext);
     }
 
     CComPtr<ID3D11DeviceContext> deviceContext;
@@ -106,6 +145,11 @@ struct DxWindow: public CWindowImpl<DxWindow> {
         return 0;
     }
 
+    void Present(){
+    	_engine->GetDeviceContext().Clear(_swapChain->GetRenderTargetView(), 0.f, 1.f, 0.f, 1.f);
+        _swapChain->Present(0);
+    }
+
     std::unique_ptr<DxEngine> _engine;
     std::unique_ptr<SwapChain> _swapChain;
 };                                                                    
@@ -119,10 +163,15 @@ int main(){
         win.ShowWindow(SW_SHOW);
         win.UpdateWindow();
 
-        MSG msg;
-        while(GetMessage(&msg, nullptr, 0, 0)){
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
+        while(true){
+            MSG msg;
+            while(PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE) && msg.message != WM_QUIT){
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+            }
+            if (msg.message == WM_QUIT) break;
+
+            win.Present();
         }
 
         return 0;
